@@ -1,5 +1,8 @@
 # Radarr / Sonarr Monitor
 
+[![pipeline status](https://gitlab.com/rapdragon/radarr-monitor/badges/main/pipeline.svg)](https://gitlab.com/rapdragon/radarr-monitor/-/commits/main)
+[![Docker Hub](https://img.shields.io/docker/pulls/rapdragon/radarr-monitor)](https://hub.docker.com/r/rapdragon/radarr-monitor)
+
 A lightweight Docker app that watches Radarr and Sonarr for new additions and sends a push notification via Pushover. Includes a web UI showing a live history of everything that's been added.
 
 ## Features
