@@ -3,43 +3,45 @@
 [![Build and Push to Docker Hub](https://github.com/rapdragon/radarr-monitor/actions/workflows/docker.yml/badge.svg)](https://github.com/rapdragon/radarr-monitor/actions/workflows/docker.yml)
 [![Docker Hub](https://img.shields.io/docker/pulls/rapdragon/radarr-monitor)](https://hub.docker.com/r/rapdragon/radarr-monitor)
 
-A lightweight Docker app that watches Radarr and Sonarr for new additions and sends a push notification via Pushover. Includes a web UI showing a live history of everything that's been added.
+A lightweight Docker app that watches Radarr and Sonarr for new additions and episode downloads, sending push notifications via Pushover. Includes a web UI showing a live history of everything that's been added.
 
 ## Features
 
 - Polls Radarr and Sonarr every 5 minutes (configurable)
-- Sends a Pushover notification for each new movie or series
-- Web UI at port `7070` showing all additions with title, year, genres, and timestamp
-- Filter view by Movies, Series, or All
+- Pushover notification for each new movie, series, or episode download
+- Web UI at port `7070` with cards for every event — auto-refreshes every 30 seconds
+- Filter view by Movies, Series, Episodes, or All
+- History auto-prunes entries older than a configurable number of days (default 30)
 - Persists history across container restarts
 - Zero external Python dependencies — stdlib only
 
-## Screenshots
+## Web UI
 
-### Web UI
 Cards update every 30 seconds automatically. Filter buttons at the top let you narrow by type.
 
 ```
-┌─────────────────────────────────────────────────┐
-│  Media Monitor                          [LIVE] ● │
-│  Radarr & Sonarr additions                       │
-├─────────────────────────────────────────────────┤
-│  [All]  [Movies]  [Series]          42 items     │
-├──────────────────┬──────────────────────────────┤
-│ 🎬 Deadpool      │ 📺 1883                       │
-│    2016          │    2021                       │
-│    Action        │    Drama, Western             │
-│    [marvel]      │    Paramount+  · 2 seasons    │
-│    May 7, 23:50  │    May 7, 23:56               │
-└──────────────────┴──────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│  Media Monitor                             [LIVE] ●  │
+│  Radarr & Sonarr additions                           │
+├──────────────────────────────────────────────────────┤
+│  [All]  [Movies]  [Series]  [Episodes]   42 items    │
+├───────────────────┬──────────────────────────────────┤
+│ 🎬 Deadpool       │ 🎞️ 9-1-1                         │
+│    2016           │    S09E18                        │
+│    Action, Comedy │    Panic                         │
+│    [marvel]       │    Fox                           │
+│    May 7, 23:50   │    May 8, 07:19                  │
+└───────────────────┴──────────────────────────────────┘
 ```
 
-### Pushover Notification
+## Pushover Notifications
+
 ```
-New Movie Added
-Deadpool (2016)
-Action, Comedy
-Added to: marvel
+New Movie Added          New Series Added         New Episode Downloaded
+────────────────         ─────────────────        ──────────────────────
+Deadpool (2016)          1883 (2021)              9-1-1 S09E18
+Action, Comedy           Drama, Western           Panic
+Added to: marvel         Paramount+ · 2 seasons   Fox
 ```
 
 ## Requirements
@@ -54,7 +56,7 @@ Added to: marvel
 ### 1. Clone the repo
 
 ```bash
-git clone git@gitlab.com:rapdragon/radarr-monitor.git
+git clone git@github.com:rapdragon/radarr-monitor.git
 cd radarr-monitor
 ```
 
@@ -70,7 +72,8 @@ environment:
   SONARR_API_KEY: <your-sonarr-api-key>
   PUSHOVER_TOKEN: <your-pushover-app-token>
   PUSHOVER_USER: <your-pushover-user-key>
-  POLL_INTERVAL: "300"   # seconds between checks
+  POLL_INTERVAL: "300"
+  HISTORY_RETENTION_DAYS: "30"
 ```
 
 **Getting your API keys:**
@@ -91,15 +94,15 @@ Web UI will be available at `http://<host>:7070`.
 
 ## Deploying on TrueNAS Scale
 
-TrueNAS Scale doesn't pick up `docker-compose.yml` changes automatically. When updating:
+TrueNAS Scale doesn't pick up `docker-compose.yml` changes automatically. When updating the code:
 
 1. Copy the updated `monitor.py` to the host
-2. Restart the container from the GUI or via:
+2. Restart the container:
    ```bash
    docker restart radarr-monitor
    ```
 
-To add new environment variables, edit the app in **Apps → radarr-monitor → Edit**.
+To change environment variables, edit the app in **Apps → radarr-monitor → Edit**.
 
 ## Configuration
 
@@ -112,6 +115,7 @@ To add new environment variables, edit the app in **Apps → radarr-monitor → 
 | `PUSHOVER_TOKEN` | required | Pushover application token |
 | `PUSHOVER_USER` | required | Pushover user key |
 | `POLL_INTERVAL` | `300` | Seconds between checks |
+| `HISTORY_RETENTION_DAYS` | `30` | Days to keep history entries before pruning |
 | `WEB_PORT` | `7070` | Port for the web UI |
 | `STATE_FILE` | `/data/seen.json` | Path to state persistence file |
 
@@ -121,11 +125,17 @@ The container stores two files in `/data/`:
 
 | File | Purpose |
 |---|---|
-| `seen.json` | Tracks all known movie/series IDs to detect new additions |
-| `history.json` | Full log of every addition shown in the web UI |
+| `seen.json` | Tracks known movie/series IDs and the Sonarr history cursor |
+| `history.json` | Full log of every event shown in the web UI |
 
 Mount a volume at `/data/` to persist these across container recreations.
 
 ## How it works
 
-On first run the monitor records all existing movies and series without sending notifications — this prevents a flood of alerts for your existing library. From that point on, any new ID that appears in Radarr or Sonarr triggers a Pushover notification and a history entry.
+On first run the monitor snapshots your existing Radarr library, Sonarr library, and Sonarr download history — no notifications are sent for anything that already exists. From that point on:
+
+- A new movie in Radarr → **New Movie Added** notification
+- A new series in Sonarr → **New Series Added** notification
+- A `downloadFolderImported` event in Sonarr history → **New Episode Downloaded** notification
+
+History entries older than `HISTORY_RETENTION_DAYS` are pruned automatically on each poll cycle.
