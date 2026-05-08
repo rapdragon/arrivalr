@@ -572,6 +572,24 @@ async function saveSettings() {
 }
 
 // ── user management ───────────────────────────────────────────────────────────
+// Use data-* attributes to avoid quote-nesting issues in inline onclick handlers
+function _btnApprove(id, role) {
+  return '<button class="ubtn ok" data-id="'+id+'" data-role="'+role+'" onclick="_onApprove(this)">'+role.charAt(0).toUpperCase()+role.slice(1)+'</button>';
+}
+function _btnDeny(id) {
+  return '<button class="ubtn danger" data-id="'+id+'" onclick="_onDeny(this)">Deny</button>';
+}
+function _btnRole(id, toRole, disabled) {
+  return '<button class="ubtn" data-id="'+id+'" data-role="'+toRole+'" onclick="_onChangeRole(this)"'+(disabled?' disabled':'')+'>&#8594;'+toRole.charAt(0).toUpperCase()+toRole.slice(1)+'</button>';
+}
+function _btnDelete(id, disabled) {
+  return '<button class="ubtn danger" data-id="'+id+'" onclick="_onDelete(this)"'+(disabled?' disabled':'')+'>Delete</button>';
+}
+function _onApprove(btn)     { approveUser(btn.dataset.id, btn.dataset.role); }
+function _onDeny(btn)        { denyUser(btn.dataset.id); }
+function _onChangeRole(btn)  { changeRole(btn.dataset.id, btn.dataset.role); }
+function _onDelete(btn)      { deleteUser(btn.dataset.id); }
+
 function renderUsers(users, pendingCount) {
   updatePendingBadge(pendingCount);
   const c = document.getElementById('users-list');
@@ -586,9 +604,7 @@ function renderUsers(users, pendingCount) {
         +(u.note?'<span class="u-note">'+esc(u.note)+'</span>':'')
         +'<span class="u-time">'+fmtShort(u.requested_at)+'</span></div>'
         +'<div class="u-actions">'
-        +'<button class="ubtn ok" onclick="approveUser(\''+u.id+'\',\'admin\')">Admin</button>'
-        +'<button class="ubtn ok" onclick="approveUser(\''+u.id+'\',\'viewer\')">Viewer</button>'
-        +'<button class="ubtn danger" onclick="denyUser(\''+u.id+'\')">Deny</button>'
+        +_btnApprove(u.id,'admin')+_btnApprove(u.id,'viewer')+_btnDeny(u.id)
         +'</div></div>';
     });
   }
@@ -601,8 +617,7 @@ function renderUsers(users, pendingCount) {
         +'<span class="uname">'+esc(u.username)+(isMe?'<span class="you-tag">you</span>':'')+'</span>'
         +'<span class="role-pill '+u.role+'">'+u.role+'</span></div>'
         +'<div class="u-actions">'
-        +'<button class="ubtn" onclick="changeRole(\''+u.id+'\',\''+other+'\')"'+(isMe?' disabled':'')+'>&#8594;'+other.charAt(0).toUpperCase()+other.slice(1)+'</button>'
-        +'<button class="ubtn danger" onclick="deleteUser(\''+u.id+'\')"'+(isMe?' disabled':'')+'>Delete</button>'
+        +_btnRole(u.id, other, isMe)+_btnDelete(u.id, isMe)
         +'</div></div>';
     });
   }
