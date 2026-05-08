@@ -12,17 +12,41 @@ from datetime import datetime, timezone
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
 
-RADARR_URL = os.environ['RADARR_URL'].rstrip('/')
-RADARR_API_KEY = os.environ['RADARR_API_KEY']
-SONARR_URL = os.environ['SONARR_URL'].rstrip('/')
-SONARR_API_KEY = os.environ['SONARR_API_KEY']
-PUSHOVER_TOKEN = os.environ['PUSHOVER_TOKEN']
-PUSHOVER_USER = os.environ['PUSHOVER_USER']
-POLL_INTERVAL = int(os.environ.get('POLL_INTERVAL', 300))
-HISTORY_RETENTION_DAYS = int(os.environ.get('HISTORY_RETENTION_DAYS', 30))
+# Infrastructure — env var only, not editable at runtime
 STATE_FILE = Path(os.environ.get('STATE_FILE', '/data/seen.json'))
 HISTORY_FILE = Path('/data/history.json')
+SETTINGS_FILE = Path('/data/settings.json')
 WEB_PORT = int(os.environ.get('WEB_PORT', 7070))
+
+# Env var defaults (lowest priority — overridden by settings.json)
+ENV_DEFAULTS = {
+    'radarr_url':             os.environ.get('RADARR_URL', '').rstrip('/'),
+    'radarr_api_key':         os.environ.get('RADARR_API_KEY', ''),
+    'sonarr_url':             os.environ.get('SONARR_URL', '').rstrip('/'),
+    'sonarr_api_key':         os.environ.get('SONARR_API_KEY', ''),
+    'pushover_token':         os.environ.get('PUSHOVER_TOKEN', ''),
+    'pushover_user':          os.environ.get('PUSHOVER_USER', ''),
+    'poll_interval':          int(os.environ.get('POLL_INTERVAL', 300)),
+    'history_retention_days': int(os.environ.get('HISTORY_RETENTION_DAYS', 30)),
+}
+
+
+def get_settings():
+    if SETTINGS_FILE.exists():
+        saved = json.loads(SETTINGS_FILE.read_text())
+        merged = {**ENV_DEFAULTS, **{k: v for k, v in saved.items() if v not in (None, '')}}
+        merged['poll_interval'] = int(merged['poll_interval'])
+        merged['history_retention_days'] = int(merged['history_retention_days'])
+        return merged
+    return dict(ENV_DEFAULTS)
+
+
+def save_settings(data):
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    allowed = set(ENV_DEFAULTS.keys())
+    clean = {k: v for k, v in data.items() if k in allowed}
+    SETTINGS_FILE.write_text(json.dumps(clean, indent=2))
+
 
 HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -33,10 +57,12 @@ HTML = """<!DOCTYPE html>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #0f0f0f; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
-  header { background: #1a1a2e; border-bottom: 1px solid #2a2a4a; padding: 20px 32px; display: flex; align-items: center; gap: 16px; }
+  header { background: #1a1a2e; border-bottom: 1px solid #2a2a4a; padding: 20px 32px; display: flex; align-items: center; justify-content: space-between; }
   header h1 { font-size: 1.4rem; font-weight: 600; color: #fff; }
   header .subtitle { font-size: 0.85rem; color: #888; margin-top: 2px; }
   .badge { background: #e50914; color: #fff; font-size: 0.7rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; letter-spacing: 0.5px; }
+  .gear-btn { background: none; border: 1px solid #333; color: #888; width: 36px; height: 36px; border-radius: 8px; cursor: pointer; font-size: 1.1rem; display: flex; align-items: center; justify-content: center; transition: all 0.15s; flex-shrink: 0; }
+  .gear-btn:hover { border-color: #666; color: #fff; }
   .controls { padding: 20px 32px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .filter-btn { background: #1e1e1e; border: 1px solid #333; color: #aaa; padding: 7px 16px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; transition: all 0.15s; }
   .filter-btn:hover, .filter-btn.active { background: #e50914; border-color: #e50914; color: #fff; }
@@ -63,9 +89,35 @@ HTML = """<!DOCTYPE html>
   .type-label.episode { background: #2e1a2e; color: #de7bde; }
   .ep-code { font-size: 0.8rem; color: #de7bde; font-weight: 600; margin-top: 2px; }
   .empty { grid-column: 1/-1; text-align: center; padding: 80px 20px; color: #444; }
-  .empty svg { width: 48px; height: 48px; margin-bottom: 16px; opacity: 0.3; }
   #refresh-indicator { width: 8px; height: 8px; background: #2ecc71; border-radius: 50%; animation: pulse 2s infinite; margin-left: 8px; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  /* Settings modal */
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; }
+  .overlay.open { display: flex; align-items: flex-start; justify-content: flex-end; }
+  .settings-panel { background: #141414; width: 420px; max-width: 100vw; height: 100vh; overflow-y: auto; border-left: 1px solid #2a2a2a; display: flex; flex-direction: column; }
+  .settings-header { padding: 20px 24px; border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; background: #141414; z-index: 1; }
+  .settings-header h2 { font-size: 1rem; font-weight: 600; }
+  .close-btn { background: none; border: none; color: #888; font-size: 1.3rem; cursor: pointer; line-height: 1; }
+  .close-btn:hover { color: #fff; }
+  .settings-body { padding: 24px; flex: 1; display: flex; flex-direction: column; gap: 24px; }
+  .settings-section { display: flex; flex-direction: column; gap: 14px; }
+  .settings-section h3 { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase; color: #666; padding-bottom: 8px; border-bottom: 1px solid #222; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 0.82rem; color: #aaa; }
+  .field-input { display: flex; gap: 6px; }
+  .field input { background: #1e1e1e; border: 1px solid #333; color: #e0e0e0; padding: 9px 12px; border-radius: 6px; font-size: 0.88rem; width: 100%; transition: border-color 0.15s; }
+  .field input:focus { outline: none; border-color: #555; }
+  .toggle-pw { background: #2a2a2a; border: 1px solid #333; color: #888; padding: 0 10px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; white-space: nowrap; }
+  .toggle-pw:hover { color: #fff; }
+  .field .hint { font-size: 0.75rem; color: #555; }
+  .settings-footer { padding: 16px 24px; border-top: 1px solid #222; display: flex; gap: 10px; position: sticky; bottom: 0; background: #141414; }
+  .btn-save { background: #e50914; border: none; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 0.88rem; font-weight: 600; flex: 1; transition: background 0.15s; }
+  .btn-save:hover { background: #c40812; }
+  .btn-save:disabled { background: #555; cursor: default; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #1e1e1e; border: 1px solid #333; color: #e0e0e0; padding: 12px 20px; border-radius: 8px; font-size: 0.88rem; z-index: 200; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .toast.success { border-color: #2ecc71; color: #2ecc71; }
+  .toast.error { border-color: #e50914; color: #e74c3c; }
 </style>
 </head>
 <body>
@@ -78,7 +130,9 @@ HTML = """<!DOCTYPE html>
     </div>
     <div class="subtitle">Radarr &amp; Sonarr additions</div>
   </div>
+  <button class="gear-btn" onclick="openSettings()" title="Settings">⚙</button>
 </header>
+
 <div class="controls">
   <button class="filter-btn active" data-filter="all">All</button>
   <button class="filter-btn" data-filter="movie">Movies</button>
@@ -87,6 +141,82 @@ HTML = """<!DOCTYPE html>
   <span class="count" id="count"></span>
 </div>
 <div class="grid" id="grid"></div>
+
+<!-- Settings panel -->
+<div class="overlay" id="overlay" onclick="maybeClose(event)">
+  <div class="settings-panel">
+    <div class="settings-header">
+      <h2>Settings</h2>
+      <button class="close-btn" onclick="closeSettings()">✕</button>
+    </div>
+    <div class="settings-body">
+      <div class="settings-section">
+        <h3>Radarr</h3>
+        <div class="field">
+          <label>URL</label>
+          <input type="text" id="radarr_url" placeholder="http://192.168.1.x:7878">
+        </div>
+        <div class="field">
+          <label>API Key</label>
+          <div class="field-input">
+            <input type="password" id="radarr_api_key" placeholder="API key">
+            <button class="toggle-pw" onclick="togglePw('radarr_api_key')">Show</button>
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <h3>Sonarr</h3>
+        <div class="field">
+          <label>URL</label>
+          <input type="text" id="sonarr_url" placeholder="http://192.168.1.x:8989">
+        </div>
+        <div class="field">
+          <label>API Key</label>
+          <div class="field-input">
+            <input type="password" id="sonarr_api_key" placeholder="API key">
+            <button class="toggle-pw" onclick="togglePw('sonarr_api_key')">Show</button>
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <h3>Pushover</h3>
+        <div class="field">
+          <label>Application Token</label>
+          <div class="field-input">
+            <input type="password" id="pushover_token" placeholder="App token">
+            <button class="toggle-pw" onclick="togglePw('pushover_token')">Show</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>User Key</label>
+          <div class="field-input">
+            <input type="password" id="pushover_user" placeholder="User key">
+            <button class="toggle-pw" onclick="togglePw('pushover_user')">Show</button>
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <h3>General</h3>
+        <div class="field">
+          <label>Poll Interval (seconds)</label>
+          <input type="number" id="poll_interval" min="60" max="3600">
+          <span class="hint">How often to check for new additions. Min 60s.</span>
+        </div>
+        <div class="field">
+          <label>History Retention (days)</label>
+          <input type="number" id="history_retention_days" min="1" max="365">
+          <span class="hint">Cards older than this are automatically removed.</span>
+        </div>
+      </div>
+    </div>
+    <div class="settings-footer">
+      <button class="btn-save" id="save-btn" onclick="saveSettings()">Save Settings</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
 <script>
   let history = [], filter = 'all';
 
@@ -109,7 +239,7 @@ HTML = """<!DOCTYPE html>
     document.getElementById('count').textContent = items.length + ' item' + (items.length !== 1 ? 's' : '');
     const grid = document.getElementById('grid');
     if (!items.length) {
-      grid.innerHTML = '<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0c0 .621.504 1.125 1.125 1.125h17.25"/></svg><div>No additions yet</div></div>';
+      grid.innerHTML = '<div class="empty">No additions yet</div>';
       return;
     }
     grid.innerHTML = [...items].reverse().map(h => {
@@ -146,6 +276,57 @@ HTML = """<!DOCTYPE html>
     });
   });
 
+  // Settings
+  async function openSettings() {
+    const r = await fetch('/api/settings');
+    const s = await r.json();
+    ['radarr_url','radarr_api_key','sonarr_url','sonarr_api_key',
+     'pushover_token','pushover_user','poll_interval','history_retention_days'].forEach(k => {
+      const el = document.getElementById(k);
+      if (el) el.value = s[k] || '';
+    });
+    document.getElementById('overlay').classList.add('open');
+  }
+
+  function closeSettings() {
+    document.getElementById('overlay').classList.remove('open');
+  }
+
+  function maybeClose(e) {
+    if (e.target === document.getElementById('overlay')) closeSettings();
+  }
+
+  function togglePw(id) {
+    const el = document.getElementById(id);
+    const btn = el.nextElementSibling;
+    if (el.type === 'password') { el.type = 'text'; btn.textContent = 'Hide'; }
+    else { el.type = 'password'; btn.textContent = 'Show'; }
+  }
+
+  async function saveSettings() {
+    const btn = document.getElementById('save-btn');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    const payload = {};
+    ['radarr_url','radarr_api_key','sonarr_url','sonarr_api_key',
+     'pushover_token','pushover_user','poll_interval','history_retention_days'].forEach(k => {
+      const el = document.getElementById(k);
+      if (el) payload[k] = el.type === 'number' ? Number(el.value) : el.value;
+    });
+    try {
+      const r = await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+      if (r.ok) { showToast('Settings saved — takes effect on next poll', 'success'); closeSettings(); }
+      else { showToast('Save failed', 'error'); }
+    } catch(e) { showToast('Save failed: ' + e, 'error'); }
+    btn.disabled = false; btn.textContent = 'Save Settings';
+  }
+
+  function showToast(msg, type) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast show ' + (type||'');
+    setTimeout(() => t.className = 'toast', 3000);
+  }
+
   load();
   setInterval(load, 30000);
 </script>
@@ -162,10 +343,10 @@ def api_get(base_url, api_key, endpoint):
         return json.loads(r.read())
 
 
-def pushover_send(title, message):
+def pushover_send(token, user, title, message):
     data = urllib.parse.urlencode({
-        'token': PUSHOVER_TOKEN,
-        'user': PUSHOVER_USER,
+        'token': token,
+        'user': user,
         'title': title,
         'message': message,
     }).encode()
@@ -197,24 +378,23 @@ def append_history(entry):
     HISTORY_FILE.write_text(json.dumps(history))
 
 
-def prune_history():
+def prune_history(retention_days):
     history = load_history()
     if not history:
         return
-    cutoff = datetime.now(timezone.utc).timestamp() - (HISTORY_RETENTION_DAYS * 86400)
+    cutoff = datetime.now(timezone.utc).timestamp() - (retention_days * 86400)
     kept = [e for e in history if datetime.fromisoformat(e['added_at'].replace('Z', '+00:00')).timestamp() >= cutoff]
     if len(kept) < len(history):
-        removed = len(history) - len(kept)
         HISTORY_FILE.write_text(json.dumps(kept))
-        log.info(f'Pruned {removed} history entry/entries older than {HISTORY_RETENTION_DAYS} days.')
+        log.info(f'Pruned {len(history) - len(kept)} history entry/entries older than {retention_days} days.')
 
 
 def now_iso():
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
-def check_radarr(state):
-    movies = api_get(RADARR_URL, RADARR_API_KEY, '/movie')
+def check_radarr(state, cfg):
+    movies = api_get(cfg['radarr_url'], cfg['radarr_api_key'], '/movie')
     current_ids = {m['id'] for m in movies}
     seen_ids = set(state.get('radarr', []))
 
@@ -240,25 +420,17 @@ def check_radarr(state):
         if folder:
             msg += f'\nAdded to: {folder}'
         log.info(f'New movie: {title} ({year})')
-        pushover_send('New Movie Added', msg)
-        append_history({
-            'type': 'movie',
-            'title': title,
-            'year': year,
-            'genres': genres,
-            'folder': folder or None,
-            'network': None,
-            'seasons': None,
-            'added_at': now_iso(),
-        })
+        pushover_send(cfg['pushover_token'], cfg['pushover_user'], 'New Movie Added', msg)
+        append_history({'type': 'movie', 'title': title, 'year': year, 'genres': genres,
+                        'folder': folder or None, 'network': None, 'seasons': None, 'added_at': now_iso()})
         time.sleep(0.5)
 
     state['radarr'] = list(seen_ids | new_ids)
     log.info(f'Radarr: notified for {len(new_movies)} new movie(s).')
 
 
-def check_sonarr(state):
-    series = api_get(SONARR_URL, SONARR_API_KEY, '/series')
+def check_sonarr(state, cfg):
+    series = api_get(cfg['sonarr_url'], cfg['sonarr_api_key'], '/series')
     current_ids = {s['id'] for s in series}
     seen_ids = set(state.get('sonarr', []))
 
@@ -287,25 +459,17 @@ def check_sonarr(state):
         if seasons:
             msg += f' · {seasons} season(s)'
         log.info(f'New series: {title} ({year})')
-        pushover_send('New Series Added', msg)
-        append_history({
-            'type': 'series',
-            'title': title,
-            'year': year,
-            'genres': genres,
-            'folder': None,
-            'network': network or None,
-            'seasons': seasons or None,
-            'added_at': now_iso(),
-        })
+        pushover_send(cfg['pushover_token'], cfg['pushover_user'], 'New Series Added', msg)
+        append_history({'type': 'series', 'title': title, 'year': year, 'genres': genres,
+                        'folder': None, 'network': network or None, 'seasons': seasons or None, 'added_at': now_iso()})
         time.sleep(0.5)
 
     state['sonarr'] = list(seen_ids | new_ids)
     log.info(f'Sonarr: notified for {len(new_series)} new series.')
 
 
-def check_sonarr_episodes(state):
-    data = api_get(SONARR_URL, SONARR_API_KEY,
+def check_sonarr_episodes(state, cfg):
+    data = api_get(cfg['sonarr_url'], cfg['sonarr_api_key'],
                    '/history?pageSize=50&sortKey=date&sortDirection=descending'
                    '&includeSeries=true&includeEpisode=true')
     records = [r for r in data.get('records', []) if r.get('eventType') == 'downloadFolderImported']
@@ -313,7 +477,6 @@ def check_sonarr_episodes(state):
         return
 
     last_id = state.get('sonarr_last_history_id')
-
     if last_id is None:
         state['sonarr_last_history_id'] = records[0]['id']
         log.info(f'Sonarr episodes first run — recording history cursor at ID {records[0]["id"]}.')
@@ -340,19 +503,11 @@ def check_sonarr_episodes(state):
         if network:
             msg += f'\n{network}'
         log.info(f'New episode: {series_title} {ep_code}')
-        pushover_send('New Episode Downloaded', msg)
-        append_history({
-            'type': 'episode',
-            'title': series_title,
-            'year': None,
-            'genres': [],
-            'folder': None,
-            'network': network or None,
-            'seasons': None,
-            'episode_code': ep_code or None,
-            'episode_title': ep_title or None,
-            'added_at': r.get('date', now_iso()),
-        })
+        pushover_send(cfg['pushover_token'], cfg['pushover_user'], 'New Episode Downloaded', msg)
+        append_history({'type': 'episode', 'title': series_title, 'year': None, 'genres': [],
+                        'folder': None, 'network': network or None, 'seasons': None,
+                        'episode_code': ep_code or None, 'episode_title': ep_title or None,
+                        'added_at': r.get('date', now_iso())})
         time.sleep(0.5)
 
     state['sonarr_last_history_id'] = records[0]['id']
@@ -360,12 +515,13 @@ def check_sonarr_episodes(state):
 
 
 def check():
+    cfg = get_settings()
     state = load_state() or {}
-    check_radarr(state)
-    check_sonarr(state)
-    check_sonarr_episodes(state)
+    check_radarr(state, cfg)
+    check_sonarr(state, cfg)
+    check_sonarr_episodes(state, cfg)
     save_state(state)
-    prune_history()
+    prune_history(cfg['history_retention_days'])
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -375,6 +531,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/history':
             data = json.dumps(load_history()).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', len(data))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path == '/api/settings':
+            data = json.dumps(get_settings()).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', len(data))
@@ -391,6 +554,20 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
+    def do_POST(self):
+        if self.path == '/api/settings':
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+            save_settings(body)
+            log.info('Settings updated via web UI.')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+        else:
+            self.send_response(404)
+            self.end_headers()
+
 
 def run_web():
     server = HTTPServer(('0.0.0.0', WEB_PORT), Handler)
@@ -399,14 +576,15 @@ def run_web():
 
 
 def main():
-    log.info(f'Media monitor starting — polling every {POLL_INTERVAL}s')
+    cfg = get_settings()
+    log.info(f'Arrivalr starting — polling every {cfg["poll_interval"]}s')
     threading.Thread(target=run_web, daemon=True).start()
     while True:
         try:
             check()
         except Exception as e:
             log.error(f'Check failed: {e}')
-        time.sleep(POLL_INTERVAL)
+        time.sleep(get_settings()['poll_interval'])
 
 
 if __name__ == '__main__':
