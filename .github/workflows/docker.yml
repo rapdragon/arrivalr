@@ -22,5 +22,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ secrets.DOCKER_HUB_USERNAME }}/radarr-monitor:latest
-            ${{ secrets.DOCKER_HUB_USERNAME }}/radarr-monitor:${{ github.sha }}
+            ${{ secrets.DOCKER_HUB_USERNAME }}/arrivalr:latest
+            ${{ secrets.DOCKER_HUB_USERNAME }}/arrivalr:${{ github.sha }}

@@ -29,7 +29,7 @@ HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Media Monitor</title>
+<title>Arrivalr</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #0f0f0f; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
@@ -72,7 +72,7 @@ HTML = """<!DOCTYPE html>
 <header>
   <div>
     <div style="display:flex;align-items:center;gap:10px">
-      <h1>Media Monitor</h1>
+      <h1>Arrivalr</h1>
       <span class="badge">LIVE</span>
       <div id="refresh-indicator"></div>
     </div>

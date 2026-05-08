@@ -1,7 +1,7 @@
-# Radarr / Sonarr Monitor
+# Arrivalr
 
-[![Build and Push to Docker Hub](https://github.com/rapdragon/radarr-monitor/actions/workflows/docker.yml/badge.svg)](https://github.com/rapdragon/radarr-monitor/actions/workflows/docker.yml)
-[![Docker Hub](https://img.shields.io/docker/pulls/rapdragon/radarr-monitor)](https://hub.docker.com/r/rapdragon/radarr-monitor)
+[![Build and Push to Docker Hub](https://github.com/rapdragon/arrivalr/actions/workflows/docker.yml/badge.svg)](https://github.com/rapdragon/arrivalr/actions/workflows/docker.yml)
+[![Docker Hub](https://img.shields.io/docker/pulls/rapdragon/arrivalr)](https://hub.docker.com/r/rapdragon/arrivalr)
 
 A lightweight Docker app that watches Radarr and Sonarr for new additions and episode downloads, sending push notifications via Pushover. Includes a web UI showing a live history of everything that's been added.
 
@@ -56,8 +56,8 @@ Added to: marvel         Paramount+ · 2 seasons   Fox
 ### 1. Clone the repo
 
 ```bash
-git clone git@github.com:rapdragon/radarr-monitor.git
-cd radarr-monitor
+git clone git@github.com:rapdragon/arrivalr.git
+cd arrivalr
 ```
 
 ### 2. Configure environment
@@ -99,10 +99,10 @@ TrueNAS Scale doesn't pick up `docker-compose.yml` changes automatically. When u
 1. Copy the updated `monitor.py` to the host
 2. Restart the container:
    ```bash
-   docker restart radarr-monitor
+   docker restart arrivalr
    ```
 
-To change environment variables, edit the app in **Apps → radarr-monitor → Edit**.
+To change environment variables, edit the app in **Apps → arrivalr → Edit**.
 
 ## Configuration
 

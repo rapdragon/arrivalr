@@ -1,7 +1,7 @@
 services:
-  radarr-monitor:
+  arrivalr:
     build: .
-    container_name: radarr-monitor
+    container_name: arrivalr
     restart: unless-stopped
     ports:
       - "7070:7070"
