@@ -316,12 +316,19 @@ HTML = """<!DOCTYPE html>
   /* Settings overlay */
   .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 100; }
   .overlay.open { display: flex; align-items: flex-start; justify-content: flex-end; }
-  .settings-panel { background: #141414; width: 440px; max-width: 100vw; height: 100vh; overflow-y: auto; border-left: 1px solid #2a2a2a; display: flex; flex-direction: column; }
-  .s-head { padding: 20px 24px; border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; background: #141414; z-index: 1; }
+  .settings-panel { background: #141414; width: 440px; max-width: 100vw; height: 100vh; overflow: hidden; border-left: 1px solid #2a2a2a; display: flex; flex-direction: column; }
+  .s-head { padding: 20px 24px; border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; background: #141414; }
   .s-head h2 { font-size: 1rem; font-weight: 600; }
   .close-btn { background: none; border: none; color: #888; font-size: 1.3rem; cursor: pointer; line-height: 1; }
   .close-btn:hover { color: #fff; }
-  .s-body { padding: 24px; flex: 1; display: flex; flex-direction: column; gap: 24px; }
+  .tab-bar { display: flex; border-bottom: 1px solid #222; background: #141414; flex-shrink: 0; }
+  .tab-btn { background: none; border: none; border-bottom: 2px solid transparent; color: #666; padding: 11px 14px; cursor: pointer; font-size: .8rem; font-weight: 600; transition: all .15s; display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .tab-btn:hover { color: #aaa; }
+  .tab-btn.active { color: #fff; border-bottom-color: #e50914; }
+  .tab-badge { background: #e50914; color: #fff; font-size: .6rem; font-weight: 700; min-width: 16px; height: 16px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
+  .s-body { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+  .tab-pane { display: none; padding: 24px; flex-direction: column; gap: 24px; }
+  .tab-pane.active { display: flex; }
   .s-section { display: flex; flex-direction: column; gap: 12px; }
   .s-section h3 { font-size: .75rem; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: #666; padding-bottom: 8px; border-bottom: 1px solid #222; }
   .field { display: flex; flex-direction: column; gap: 6px; }
@@ -407,10 +414,17 @@ HTML = """<!DOCTYPE html>
       <h2>Settings</h2>
       <button class="close-btn" onclick="closeSettings()">&#x2715;</button>
     </div>
+    <div class="tab-bar">
+      <button class="tab-btn" id="tab-btn-requests" onclick="switchTab('requests')">Requests <span class="tab-badge" id="req-badge" style="display:none"></span></button>
+      <button class="tab-btn" id="tab-btn-users" onclick="switchTab('users')">Users</button>
+      <button class="tab-btn active" id="tab-btn-connections" onclick="switchTab('connections')">Connections</button>
+      <button class="tab-btn" id="tab-btn-general" onclick="switchTab('general')">General</button>
+    </div>
     <div class="s-body">
-      <!-- Users section (admin only) -->
-      <div class="s-section" id="users-section" style="display:none">
-        <h3>Users</h3>
+      <div class="tab-pane" id="tab-requests">
+        <div id="requests-list"></div>
+      </div>
+      <div class="tab-pane" id="tab-users">
         <div id="users-list"></div>
         <div id="add-user-box" class="add-user-box" style="display:none">
           <div class="add-user-row">
@@ -425,51 +439,54 @@ HTML = """<!DOCTYPE html>
         </div>
         <button class="btn-add-user" id="btn-add-user" onclick="showAddUserForm()">+ Add User</button>
       </div>
-      <!-- App settings -->
-      <div class="s-section">
-        <h3>Radarr</h3>
-        <div class="field"><label>URL</label>
-          <input type="text" id="radarr_url" placeholder="http://192.168.1.x:7878"></div>
-        <div class="field"><label>API Key</label>
-          <div class="field-row">
-            <input type="password" id="radarr_api_key" placeholder="API key">
-            <button class="toggle-pw" onclick="togglePw('radarr_api_key')">Show</button>
-          </div></div>
+      <div class="tab-pane active" id="tab-connections">
+        <div class="s-section">
+          <h3>Radarr</h3>
+          <div class="field"><label>URL</label>
+            <input type="text" id="radarr_url" placeholder="http://192.168.1.x:7878"></div>
+          <div class="field"><label>API Key</label>
+            <div class="field-row">
+              <input type="password" id="radarr_api_key" placeholder="API key">
+              <button class="toggle-pw" onclick="togglePw('radarr_api_key')">Show</button>
+            </div></div>
+        </div>
+        <div class="s-section">
+          <h3>Sonarr</h3>
+          <div class="field"><label>URL</label>
+            <input type="text" id="sonarr_url" placeholder="http://192.168.1.x:8989"></div>
+          <div class="field"><label>API Key</label>
+            <div class="field-row">
+              <input type="password" id="sonarr_api_key" placeholder="API key">
+              <button class="toggle-pw" onclick="togglePw('sonarr_api_key')">Show</button>
+            </div></div>
+        </div>
+        <div class="s-section">
+          <h3>Pushover</h3>
+          <div class="field"><label>Application Token</label>
+            <div class="field-row">
+              <input type="password" id="pushover_token" placeholder="App token">
+              <button class="toggle-pw" onclick="togglePw('pushover_token')">Show</button>
+            </div></div>
+          <div class="field"><label>User Key</label>
+            <div class="field-row">
+              <input type="password" id="pushover_user" placeholder="User key">
+              <button class="toggle-pw" onclick="togglePw('pushover_user')">Show</button>
+            </div></div>
+        </div>
       </div>
-      <div class="s-section">
-        <h3>Sonarr</h3>
-        <div class="field"><label>URL</label>
-          <input type="text" id="sonarr_url" placeholder="http://192.168.1.x:8989"></div>
-        <div class="field"><label>API Key</label>
-          <div class="field-row">
-            <input type="password" id="sonarr_api_key" placeholder="API key">
-            <button class="toggle-pw" onclick="togglePw('sonarr_api_key')">Show</button>
-          </div></div>
-      </div>
-      <div class="s-section">
-        <h3>Pushover</h3>
-        <div class="field"><label>Application Token</label>
-          <div class="field-row">
-            <input type="password" id="pushover_token" placeholder="App token">
-            <button class="toggle-pw" onclick="togglePw('pushover_token')">Show</button>
-          </div></div>
-        <div class="field"><label>User Key</label>
-          <div class="field-row">
-            <input type="password" id="pushover_user" placeholder="User key">
-            <button class="toggle-pw" onclick="togglePw('pushover_user')">Show</button>
-          </div></div>
-      </div>
-      <div class="s-section">
-        <h3>General</h3>
-        <div class="field"><label>Poll Interval (seconds)</label>
-          <input type="number" id="poll_interval" min="60" max="3600">
-          <span class="hint">Min 60s.</span></div>
-        <div class="field"><label>History Retention (days)</label>
-          <input type="number" id="history_retention_days" min="1" max="365">
-          <span class="hint">Cards older than this are pruned automatically.</span></div>
+      <div class="tab-pane" id="tab-general">
+        <div class="s-section">
+          <h3>General</h3>
+          <div class="field"><label>Poll Interval (seconds)</label>
+            <input type="number" id="poll_interval" min="60" max="3600">
+            <span class="hint">Min 60s.</span></div>
+          <div class="field"><label>History Retention (days)</label>
+            <input type="number" id="history_retention_days" min="1" max="365">
+            <span class="hint">Cards older than this are pruned automatically.</span></div>
+        </div>
       </div>
     </div>
-    <div class="s-footer">
+    <div class="s-footer" id="s-footer">
       <button class="btn-save" id="save-btn" onclick="saveSettings()">Save Settings</button>
     </div>
   </div>
@@ -563,6 +580,7 @@ const SFIELDS = ['radarr_url','radarr_api_key','sonarr_url','sonarr_api_key',
 
 function openSettings() {
   if (ROLE !== 'admin') return;
+  switchTab('connections');
   document.getElementById('overlay').classList.add('open');
   _loadSettingsData();
 }
@@ -574,8 +592,11 @@ async function _loadSettingsData() {
     if (!sr.ok) { showToast('Failed to load settings ('+sr.status+')', 'error'); return; }
     const s = await sr.json();
     SFIELDS.forEach(k => { const el = document.getElementById(k); if (el) el.value = s[k]||''; });
-    if (ur.ok) { const ud = await ur.json(); renderUsers(ud.users, ud.pending_count); }
-    document.getElementById('users-section').style.display = '';
+    if (ur.ok) {
+      const ud = await ur.json();
+      renderUsers(ud.users, ud.pending_count);
+      if (ud.pending_count > 0) switchTab('requests');
+    }
   } catch(err) {
     showToast('Error loading settings: ' + err.message, 'error');
     console.error(err);
@@ -584,6 +605,15 @@ async function _loadSettingsData() {
 
 function closeSettings() { document.getElementById('overlay').classList.remove('open'); }
 function maybeClose(e) { if (e.target === document.getElementById('overlay')) closeSettings(); }
+
+function switchTab(name) {
+  ['requests','users','connections','general'].forEach(t => {
+    document.getElementById('tab-btn-'+t).classList.toggle('active', t===name);
+    document.getElementById('tab-'+t).classList.toggle('active', t===name);
+  });
+  const footer = document.getElementById('s-footer');
+  footer.style.display = (name==='connections'||name==='general') ? '' : 'none';
+}
 
 function togglePw(id) {
   const el = document.getElementById(id), btn = el.nextElementSibling;
@@ -625,43 +655,55 @@ function _onDelete(btn)      { deleteUser(btn.dataset.id); }
 
 function renderUsers(users, pendingCount) {
   updatePendingBadge(pendingCount);
-  const c = document.getElementById('users-list');
   const pending = users.filter(u => u.status==='pending');
   const active  = users.filter(u => u.status==='active');
+  renderRequests(pending);
+  renderActiveUsers(active);
+}
+
+function renderRequests(pending) {
+  const c = document.getElementById('requests-list');
+  if (!pending.length) { c.innerHTML = '<div class="no-users">No pending requests.</div>'; return; }
   let html = '';
-  if (pending.length) {
-    html += '<div class="u-group pending-lbl">Pending Requests ('+pending.length+')</div>';
-    pending.forEach(u => {
-      html += '<div class="user-row pending">'
-        +'<div class="u-info"><span class="uname">'+esc(u.username)+'</span>'
-        +(u.note?'<span class="u-note">'+esc(u.note)+'</span>':'')
-        +'<span class="u-time">'+fmtShort(u.requested_at)+'</span></div>'
-        +'<div class="u-actions">'
-        +_btnApprove(u.id,'admin')+_btnApprove(u.id,'viewer')+_btnDeny(u.id)
-        +'</div></div>';
-    });
-  }
-  if (active.length) {
-    if (pending.length) html += '<div class="u-group">Active</div>';
-    active.forEach(u => {
-      const isMe = u.username === USERNAME;
-      const other = u.role==='admin'?'viewer':'admin';
-      html += '<div class="user-row'+(isMe?' me':'')+'"><div class="u-info">'
-        +'<span class="uname">'+esc(u.username)+(isMe?'<span class="you-tag">you</span>':'')+'</span>'
-        +'<span class="role-pill '+u.role+'">'+u.role+'</span></div>'
-        +'<div class="u-actions">'
-        +_btnRole(u.id, other, isMe)+_btnDelete(u.id, isMe)
-        +'</div></div>';
-    });
-  }
-  if (!users.length) html = '<div class="no-users">No users.</div>';
+  pending.forEach(u => {
+    html += '<div class="user-row pending">'
+      +'<div class="u-info"><span class="uname">'+esc(u.username)+'</span>'
+      +(u.note?'<span class="u-note">'+esc(u.note)+'</span>':'')
+      +'<span class="u-time">'+fmtShort(u.requested_at)+'</span></div>'
+      +'<div class="u-actions">'
+      +_btnApprove(u.id,'admin')+_btnApprove(u.id,'viewer')+_btnDeny(u.id)
+      +'</div></div>';
+  });
+  c.innerHTML = html;
+}
+
+function renderActiveUsers(active) {
+  const c = document.getElementById('users-list');
+  if (!active.length) { c.innerHTML = '<div class="no-users">No active users.</div>'; return; }
+  let html = '';
+  active.forEach(u => {
+    const isMe = u.username === USERNAME;
+    const other = u.role==='admin'?'viewer':'admin';
+    html += '<div class="user-row'+(isMe?' me':'')+'"><div class="u-info">'
+      +'<span class="uname">'+esc(u.username)+(isMe?'<span class="you-tag">you</span>':'')+'</span>'
+      +'<span class="role-pill '+u.role+'">'+u.role+'</span></div>'
+      +'<div class="u-actions">'
+      +_btnRole(u.id, other, isMe)+_btnDelete(u.id, isMe)
+      +'</div></div>';
+  });
   c.innerHTML = html;
 }
 
 function updatePendingBadge(count) {
   const dot = document.getElementById('pending-dot');
-  if (count > 0) { dot.textContent = count; dot.style.display='flex'; }
-  else dot.style.display='none';
+  const badge = document.getElementById('req-badge');
+  if (count > 0) {
+    dot.textContent = count; dot.style.display='flex';
+    if (badge) { badge.textContent = count; badge.style.display='inline-flex'; }
+  } else {
+    dot.style.display='none';
+    if (badge) badge.style.display='none';
+  }
 }
 
 async function approveUser(id, role) {
