@@ -19,6 +19,7 @@ SONARR_API_KEY = os.environ['SONARR_API_KEY']
 PUSHOVER_TOKEN = os.environ['PUSHOVER_TOKEN']
 PUSHOVER_USER = os.environ['PUSHOVER_USER']
 POLL_INTERVAL = int(os.environ.get('POLL_INTERVAL', 300))
+HISTORY_RETENTION_DAYS = int(os.environ.get('HISTORY_RETENTION_DAYS', 30))
 STATE_FILE = Path(os.environ.get('STATE_FILE', '/data/seen.json'))
 HISTORY_FILE = Path('/data/history.json')
 WEB_PORT = int(os.environ.get('WEB_PORT', 7070))
@@ -190,6 +191,18 @@ def append_history(entry):
     HISTORY_FILE.write_text(json.dumps(history))
 
 
+def prune_history():
+    history = load_history()
+    if not history:
+        return
+    cutoff = datetime.now(timezone.utc).timestamp() - (HISTORY_RETENTION_DAYS * 86400)
+    kept = [e for e in history if datetime.fromisoformat(e['added_at'].replace('Z', '+00:00')).timestamp() >= cutoff]
+    if len(kept) < len(history):
+        removed = len(history) - len(kept)
+        HISTORY_FILE.write_text(json.dumps(kept))
+        log.info(f'Pruned {removed} history entry/entries older than {HISTORY_RETENTION_DAYS} days.')
+
+
 def now_iso():
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
@@ -290,6 +303,7 @@ def check():
     check_radarr(state)
     check_sonarr(state)
     save_state(state)
+    prune_history()
 
 
 class Handler(BaseHTTPRequestHandler):
