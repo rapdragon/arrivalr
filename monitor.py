@@ -130,9 +130,12 @@ def sanitize_user(u):
 
 _ACSS = """
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: #0f0f0f; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont,
-       'Segoe UI', sans-serif; min-height: 100vh; display: flex; align-items: center;
-       justify-content: center; padding: 20px; }
+body { background: #0f0f0f url('/logo.png') center/cover fixed no-repeat; color: #e0e0e0;
+       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+       min-height: 100vh; display: flex; align-items: center; justify-content: center;
+       padding: 20px; }
+body::before { content: ''; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 0; }
+.card { position: relative; z-index: 1; }
 .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 12px; padding: 40px;
         width: 100%; max-width: 390px; display: flex; flex-direction: column; gap: 24px; }
 .logo { text-align: center; }
