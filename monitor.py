@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 STATE_FILE   = Path(os.environ.get('STATE_FILE', '/data/seen.json'))
 HISTORY_FILE = Path('/data/history.json')
+LOGO_FILE    = Path('/data/logo.png')
 SETTINGS_FILE = Path('/data/settings.json')
 USERS_FILE   = Path('/data/users.json')
 WEB_PORT     = int(os.environ.get('WEB_PORT', 7070))
@@ -180,11 +181,19 @@ _ERRORS = {
 }
 
 
+def _logo_html(size=60):
+    if LOGO_FILE.exists():
+        return f'<img src="/logo.png" alt="Arrivalr" style="height:{size}px;object-fit:contain;max-width:240px">'
+    return '<span style="font-size:1.6rem;font-weight:700;color:#fff">Arrivalr</span>'
+
+
 def build_login(error=None):
     alert = ('<div class="alert error">' + _ERRORS.get(error, error or '') + '</div>') if error else ''
     return _auth_page('Sign In',
         '<div class="card">'
-        '<div class="logo"><h1>Arrivalr <span class="badge">LIVE</span></h1>'
+        '<div class="logo" style="display:flex;flex-direction:column;align-items:center;gap:8px">'
+        + _logo_html(60) +
+        '<span class="badge">LIVE</span>'
         '<p>Media Monitor</p></div>' + alert +
         '<form method="post" action="/login" class="form">'
         '<div class="field"><label>Username</label>'
@@ -200,7 +209,9 @@ def build_setup(error=None):
     alert = ('<div class="alert error">' + _ERRORS.get(error, error or '') + '</div>') if error else ''
     return _auth_page('Setup',
         '<div class="card">'
-        '<div class="logo"><h1>Arrivalr <span class="badge">LIVE</span></h1>'
+        '<div class="logo" style="display:flex;flex-direction:column;align-items:center;gap:8px">'
+        + _logo_html(60) +
+        '<span class="badge">LIVE</span>'
         '<p>Media Monitor</p></div>' + alert +
         '<form method="post" action="/setup" class="form">'
         '<h2>Create your admin account to get started</h2>'
@@ -218,7 +229,9 @@ def build_request(error=None, success=False):
     if success:
         return _auth_page('Request Submitted',
             '<div class="card">'
-            '<div class="logo"><h1>Arrivalr <span class="badge">LIVE</span></h1>'
+            '<div class="logo" style="display:flex;flex-direction:column;align-items:center;gap:8px">'
+            + _logo_html(60) +
+            '<span class="badge">LIVE</span>'
             '<p>Media Monitor</p></div>'
             '<div class="alert success">Your request has been submitted. '
             'An admin will review it and grant access.</div>'
@@ -227,7 +240,9 @@ def build_request(error=None, success=False):
     alert = ('<div class="alert error">' + _ERRORS.get(error, error or '') + '</div>') if error else ''
     return _auth_page('Request Access',
         '<div class="card">'
-        '<div class="logo"><h1>Arrivalr <span class="badge">LIVE</span></h1>'
+        '<div class="logo" style="display:flex;flex-direction:column;align-items:center;gap:8px">'
+        + _logo_html(60) +
+        '<span class="badge">LIVE</span>'
         '<p>Media Monitor</p></div>' + alert +
         '<form method="post" action="/request" class="form">'
         '<h2>Request Access</h2>'
@@ -353,13 +368,16 @@ HTML = """<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <div>
-    <div style="display:flex;align-items:center;gap:10px">
-      <h1>Arrivalr</h1>
-      <span class="badge">LIVE</span>
-      <div id="refresh-indicator"></div>
+  <div style="display:flex;align-items:center;gap:14px">
+    <div id="site-logo"></div>
+    <div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <h1 id="site-name">Arrivalr</h1>
+        <span class="badge">LIVE</span>
+        <div id="refresh-indicator"></div>
+      </div>
+      <div class="subtitle">Radarr &amp; Sonarr additions</div>
     </div>
-    <div class="subtitle">Radarr &amp; Sonarr additions</div>
   </div>
   <div class="header-right">
     <span class="role-pill __ROLE__" id="role-pill">__ROLE__</span>
@@ -460,6 +478,18 @@ HTML = """<!DOCTYPE html>
 const ROLE = '__ROLE__';
 const USERNAME = '__USERNAME__';
 let mediaHistory = [], currentFilter = 'all';
+
+// Load logo if available
+(function() {
+  var img = new Image();
+  img.onload = function() {
+    var el = document.getElementById('site-logo');
+    var nm = document.getElementById('site-name');
+    if (el) { img.style.cssText='height:48px;object-fit:contain;max-width:200px'; el.appendChild(img); }
+    if (nm) nm.style.display='none';
+  };
+  img.src = '/logo.png';
+})();
 
 // ── history ──────────────────────────────────────────────────────────────────
 async function load() {
@@ -917,7 +947,19 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?')[0]
         qs   = self.path[len(path)+1:] if '?' in self.path else ''
 
-        if path == '/setup':
+        if path == '/logo.png':
+            if LOGO_FILE.exists():
+                data = LOGO_FILE.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/png')
+                self.send_header('Content-Length', len(data))
+                self.send_header('Cache-Control', 'max-age=3600')
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self.send_response(404); self.end_headers()
+
+        elif path == '/setup':
             if has_active_admin(): self._redirect('/'); return
             self._html(build_setup())
 
