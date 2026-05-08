@@ -2,6 +2,7 @@ import os
 import json
 import time
 import logging
+import secrets
 import threading
 import urllib.request
 import urllib.parse
@@ -12,13 +13,12 @@ from datetime import datetime, timezone
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
 
-# Infrastructure — env var only, not editable at runtime
 STATE_FILE = Path(os.environ.get('STATE_FILE', '/data/seen.json'))
 HISTORY_FILE = Path('/data/history.json')
 SETTINGS_FILE = Path('/data/settings.json')
 WEB_PORT = int(os.environ.get('WEB_PORT', 7070))
+SESSION_TTL = 86400  # 24 hours
 
-# Env var defaults (lowest priority — overridden by settings.json)
 ENV_DEFAULTS = {
     'radarr_url':             os.environ.get('RADARR_URL', '').rstrip('/'),
     'radarr_api_key':         os.environ.get('RADARR_API_KEY', ''),
@@ -28,7 +28,12 @@ ENV_DEFAULTS = {
     'pushover_user':          os.environ.get('PUSHOVER_USER', ''),
     'poll_interval':          int(os.environ.get('POLL_INTERVAL', 300)),
     'history_retention_days': int(os.environ.get('HISTORY_RETENTION_DAYS', 30)),
+    'admin_password':         os.environ.get('ADMIN_PASSWORD', ''),
+    'viewer_password':        os.environ.get('VIEWER_PASSWORD', ''),
 }
+
+_sessions = {}
+_sessions_lock = threading.Lock()
 
 
 def get_settings():
@@ -48,6 +53,83 @@ def save_settings(data):
     SETTINGS_FILE.write_text(json.dumps(clean, indent=2))
 
 
+def create_session(role):
+    token = secrets.token_hex(32)
+    with _sessions_lock:
+        _sessions[token] = {'role': role, 'expires': time.time() + SESSION_TTL}
+    return token
+
+
+def get_session_role(cookie_header):
+    if not cookie_header:
+        return None
+    for part in cookie_header.split(';'):
+        name, _, val = part.strip().partition('=')
+        if name.strip() == 'arrivalr_session':
+            with _sessions_lock:
+                s = _sessions.get(val.strip())
+                if s and s['expires'] > time.time():
+                    return s['role']
+    return None
+
+
+def invalidate_session(cookie_header):
+    if not cookie_header:
+        return
+    for part in cookie_header.split(';'):
+        name, _, val = part.strip().partition('=')
+        if name.strip() == 'arrivalr_session':
+            with _sessions_lock:
+                _sessions.pop(val.strip(), None)
+
+
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arrivalr — Sign In</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f0f0f; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 12px; padding: 40px; width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 28px; }
+  .logo { text-align: center; }
+  .logo h1 { font-size: 1.7rem; font-weight: 700; color: #fff; display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .badge { background: #e50914; color: #fff; font-size: 0.68rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; letter-spacing: 0.5px; }
+  .logo p { color: #555; font-size: 0.82rem; margin-top: 8px; }
+  .form { display: flex; flex-direction: column; gap: 16px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 0.82rem; color: #aaa; }
+  .field input { background: #252525; border: 1px solid #333; color: #e0e0e0; padding: 11px 14px; border-radius: 6px; font-size: 0.9rem; width: 100%; transition: border-color 0.15s; }
+  .field input:focus { outline: none; border-color: #555; }
+  .btn { background: #e50914; border: none; color: #fff; padding: 12px; border-radius: 6px; cursor: pointer; font-size: 0.9rem; font-weight: 600; transition: background 0.15s; width: 100%; }
+  .btn:hover { background: #c40812; }
+  .error { background: #2e1a1a; border: 1px solid #5a2020; color: #e74c3c; padding: 11px 14px; border-radius: 6px; font-size: 0.82rem; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <h1>Arrivalr <span class="badge">LIVE</span></h1>
+    <p>Media Monitor</p>
+  </div>
+  __ERROR__
+  <form method="post" action="/login" class="form">
+    <div class="field">
+      <label>Username</label>
+      <input type="text" name="username" placeholder="admin or viewer" autofocus autocomplete="username">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" name="password" autocomplete="current-password">
+    </div>
+    <button type="submit" class="btn">Sign In</button>
+  </form>
+</div>
+</body>
+</html>"""
+
+
 HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -61,8 +143,14 @@ HTML = """<!DOCTYPE html>
   header h1 { font-size: 1.4rem; font-weight: 600; color: #fff; }
   header .subtitle { font-size: 0.85rem; color: #888; margin-top: 2px; }
   .badge { background: #e50914; color: #fff; font-size: 0.7rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; letter-spacing: 0.5px; }
-  .gear-btn { background: none; border: 1px solid #333; color: #888; width: 36px; height: 36px; border-radius: 8px; cursor: pointer; font-size: 1.1rem; display: flex; align-items: center; justify-content: center; transition: all 0.15s; flex-shrink: 0; }
+  .header-actions { display: flex; align-items: center; gap: 10px; }
+  .role-pill { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.5px; padding: 4px 10px; border-radius: 10px; text-transform: uppercase; }
+  .role-pill.admin { background: #1a1a3e; color: #7b8cde; }
+  .role-pill.viewer { background: #1a2e1a; color: #7bde8c; }
+  .gear-btn { background: none; border: 1px solid #333; color: #888; width: 36px; height: 36px; border-radius: 8px; cursor: pointer; font-size: 1.1rem; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
   .gear-btn:hover { border-color: #666; color: #fff; }
+  .logout-btn { color: #555; font-size: 0.82rem; text-decoration: none; padding: 7px 12px; border: 1px solid #2a2a2a; border-radius: 6px; transition: all 0.15s; white-space: nowrap; }
+  .logout-btn:hover { color: #ddd; border-color: #555; }
   .controls { padding: 20px 32px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .filter-btn { background: #1e1e1e; border: 1px solid #333; color: #aaa; padding: 7px 16px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; transition: all 0.15s; }
   .filter-btn:hover, .filter-btn.active { background: #e50914; border-color: #e50914; color: #fff; }
@@ -91,7 +179,7 @@ HTML = """<!DOCTYPE html>
   .empty { grid-column: 1/-1; text-align: center; padding: 80px 20px; color: #444; }
   #refresh-indicator { width: 8px; height: 8px; background: #2ecc71; border-radius: 50%; animation: pulse 2s infinite; margin-left: 8px; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-  /* Settings modal */
+  /* Settings panel */
   .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; }
   .overlay.open { display: flex; align-items: flex-start; justify-content: flex-end; }
   .settings-panel { background: #141414; width: 420px; max-width: 100vw; height: 100vh; overflow-y: auto; border-left: 1px solid #2a2a2a; display: flex; flex-direction: column; }
@@ -130,7 +218,11 @@ HTML = """<!DOCTYPE html>
     </div>
     <div class="subtitle">Radarr &amp; Sonarr additions</div>
   </div>
-  <button class="gear-btn" onclick="openSettings()" title="Settings">⚙</button>
+  <div class="header-actions">
+    <span class="role-pill" id="role-pill"></span>
+    <button class="gear-btn" id="gear-btn" onclick="openSettings()" title="Settings">⚙</button>
+    <a href="/logout" class="logout-btn" id="logout-btn">Sign out</a>
+  </div>
 </header>
 
 <div class="controls">
@@ -142,12 +234,12 @@ HTML = """<!DOCTYPE html>
 </div>
 <div class="grid" id="grid"></div>
 
-<!-- Settings panel -->
+<!-- Settings panel (admin only) -->
 <div class="overlay" id="overlay" onclick="maybeClose(event)">
   <div class="settings-panel">
     <div class="settings-header">
       <h2>Settings</h2>
-      <button class="close-btn" onclick="closeSettings()">✕</button>
+      <button class="close-btn" onclick="closeSettings()">&#x2715;</button>
     </div>
     <div class="settings-body">
       <div class="settings-section">
@@ -208,6 +300,25 @@ HTML = """<!DOCTYPE html>
           <span class="hint">Cards older than this are automatically removed.</span>
         </div>
       </div>
+      <div class="settings-section">
+        <h3>Access Control</h3>
+        <div class="field">
+          <label>Admin Password</label>
+          <div class="field-input">
+            <input type="password" id="admin_password" placeholder="Set to enable login">
+            <button class="toggle-pw" onclick="togglePw('admin_password')">Show</button>
+          </div>
+          <span class="hint">Full access including settings. Leave blank to disable login.</span>
+        </div>
+        <div class="field">
+          <label>Viewer Password</label>
+          <div class="field-input">
+            <input type="password" id="viewer_password" placeholder="Optional read-only access">
+            <button class="toggle-pw" onclick="togglePw('viewer_password')">Show</button>
+          </div>
+          <span class="hint">Read-only access to the history cards. Leave blank to disable.</span>
+        </div>
+      </div>
     </div>
     <div class="settings-footer">
       <button class="btn-save" id="save-btn" onclick="saveSettings()">Save Settings</button>
@@ -218,12 +329,29 @@ HTML = """<!DOCTYPE html>
 <div class="toast" id="toast"></div>
 
 <script>
-  let history = [], filter = 'all';
+  const ROLE = '__ROLE__';
+  let mediaHistory = [], filter = 'all';
+
+  // Setup header based on role
+  (function() {
+    const pill = document.getElementById('role-pill');
+    const gear = document.getElementById('gear-btn');
+    const logout = document.getElementById('logout-btn');
+    if (ROLE === 'none') {
+      pill.style.display = 'none';
+      logout.style.display = 'none';
+    } else {
+      pill.textContent = ROLE === 'admin' ? 'Admin' : 'Viewer';
+      pill.classList.add(ROLE);
+      if (ROLE !== 'admin') gear.style.display = 'none';
+    }
+  })();
 
   async function load() {
     try {
       const r = await fetch('/api/history');
-      history = await r.json();
+      if (r.status === 401) { location.href = '/login'; return; }
+      mediaHistory = await r.json();
       render();
     } catch(e) { console.error(e); }
   }
@@ -235,7 +363,7 @@ HTML = """<!DOCTYPE html>
   }
 
   function render() {
-    const items = filter === 'all' ? history : history.filter(h => h.type === filter);
+    const items = filter === 'all' ? mediaHistory : mediaHistory.filter(h => h.type === filter);
     document.getElementById('count').textContent = items.length + ' item' + (items.length !== 1 ? 's' : '');
     const grid = document.getElementById('grid');
     if (!items.length) {
@@ -244,26 +372,23 @@ HTML = """<!DOCTYPE html>
     }
     grid.innerHTML = [...items].reverse().map(h => {
       const icon = h.type === 'movie' ? '🎬' : h.type === 'episode' ? '🎞️' : '📺';
-      const tags = (h.genres||[]).map(g => `<span class="tag">${g}</span>`).join('');
-      const folder = h.folder ? `<span class="tag folder">${h.folder}</span>` : '';
-      const network = h.network ? `<span class="tag network">${h.network}</span>` : '';
-      const seasons = h.seasons ? `<span class="tag">${h.seasons} season${h.seasons>1?'s':''}</span>` : '';
-      const epCode = h.episode_code ? `<div class="ep-code">${h.episode_code}${h.episode_title ? ' · ' + h.episode_title : ''}</div>` : '';
+      const tags = (h.genres||[]).map(g => '<span class="tag">'+g+'</span>').join('');
+      const folder = h.folder ? '<span class="tag folder">'+h.folder+'</span>' : '';
+      const network = h.network ? '<span class="tag network">'+h.network+'</span>' : '';
+      const seasons = h.seasons ? '<span class="tag">'+h.seasons+' season'+(h.seasons>1?'s':'')+'</span>' : '';
+      const epCode = h.episode_code ? '<div class="ep-code">'+h.episode_code+(h.episode_title?' &middot; '+h.episode_title:'')+'</div>' : '';
       const subtitle = h.type === 'episode' ? '' : (h.year || '');
-      return `<div class="card">
-        <div class="card-header">
-          <div class="type-icon ${h.type}">${icon}</div>
-          <div>
-            <div class="card-title">${h.title}</div>
-            ${epCode || (subtitle ? `<div class="card-year">${subtitle}</div>` : '')}
-          </div>
-        </div>
-        ${tags||folder||network||seasons ? `<div class="tags">${tags}${folder}${network}${seasons}</div>` : ''}
-        <div class="card-footer">
-          <span class="added-at">${fmt(h.added_at)}</span>
-          <span class="type-label ${h.type}">${h.type}</span>
-        </div>
-      </div>`;
+      return '<div class="card">'
+        + '<div class="card-header">'
+        + '<div class="type-icon '+h.type+'">'+icon+'</div>'
+        + '<div><div class="card-title">'+h.title+'</div>'
+        + (epCode || (subtitle ? '<div class="card-year">'+subtitle+'</div>' : ''))
+        + '</div></div>'
+        + ((tags||folder||network||seasons) ? '<div class="tags">'+tags+folder+network+seasons+'</div>' : '')
+        + '<div class="card-footer">'
+        + '<span class="added-at">'+fmt(h.added_at)+'</span>'
+        + '<span class="type-label '+h.type+'">'+h.type+'</span>'
+        + '</div></div>';
     }).join('');
   }
 
@@ -276,12 +401,17 @@ HTML = """<!DOCTYPE html>
     });
   });
 
-  // Settings
+  // Settings (admin only)
+  const ALL_FIELDS = ['radarr_url','radarr_api_key','sonarr_url','sonarr_api_key',
+    'pushover_token','pushover_user','poll_interval','history_retention_days',
+    'admin_password','viewer_password'];
+
   async function openSettings() {
+    if (ROLE !== 'admin' && ROLE !== 'none') return;
     const r = await fetch('/api/settings');
+    if (r.status === 403) { showToast('Admin access required', 'error'); return; }
     const s = await r.json();
-    ['radarr_url','radarr_api_key','sonarr_url','sonarr_api_key',
-     'pushover_token','pushover_user','poll_interval','history_retention_days'].forEach(k => {
+    ALL_FIELDS.forEach(k => {
       const el = document.getElementById(k);
       if (el) el.value = s[k] || '';
     });
@@ -307,8 +437,7 @@ HTML = """<!DOCTYPE html>
     const btn = document.getElementById('save-btn');
     btn.disabled = true; btn.textContent = 'Saving…';
     const payload = {};
-    ['radarr_url','radarr_api_key','sonarr_url','sonarr_api_key',
-     'pushover_token','pushover_user','poll_interval','history_retention_days'].forEach(k => {
+    ALL_FIELDS.forEach(k => {
       const el = document.getElementById(k);
       if (el) payload[k] = el.type === 'number' ? Number(el.value) : el.value;
     });
@@ -332,6 +461,15 @@ HTML = """<!DOCTYPE html>
 </script>
 </body>
 </html>"""
+
+
+def build_html(role):
+    return HTML.replace('__ROLE__', role)
+
+
+def build_login(error=False):
+    err_html = '<div class="error">Invalid username or password.</div>' if error else ''
+    return LOGIN_HTML.replace('__ERROR__', err_html)
 
 
 def api_get(base_url, api_key, endpoint):
@@ -528,42 +666,139 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def _get_role(self):
+        """Returns the role for this request: 'admin', 'viewer', or None (not logged in).
+        Returns 'none' when auth is disabled (no admin_password set)."""
+        cfg = get_settings()
+        if not cfg.get('admin_password'):
+            return 'none'
+        return get_session_role(self.headers.get('Cookie', ''))
+
+    def _redirect(self, location):
+        self.send_response(302)
+        self.send_header('Location', location)
+        self.end_headers()
+
+    def _json(self, code, body):
+        data = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', len(data))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _require_login(self):
+        """Sends 401/redirect if not logged in. Returns role or None."""
+        role = self._get_role()
+        if role is None:
+            if self.path.startswith('/api/'):
+                self._json(401, {'error': 'unauthorized'})
+            else:
+                self._redirect('/login')
+        return role
+
+    def _require_admin(self):
+        """Sends 403 if not admin. Returns role or None."""
+        role = self._require_login()
+        if role is None:
+            return None
+        if role not in ('admin', 'none'):
+            self._json(403, {'error': 'forbidden'})
+            return None
+        return role
+
     def do_GET(self):
-        if self.path == '/api/history':
+        path = self.path.split('?')[0]
+
+        if path == '/login':
+            error = 'error=1' in self.path
+            data = build_login(error).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.send_header('Content-Length', len(data))
+            self.end_headers()
+            self.wfile.write(data)
+
+        elif path == '/logout':
+            invalidate_session(self.headers.get('Cookie', ''))
+            self.send_response(302)
+            self.send_header('Location', '/login')
+            self.send_header('Set-Cookie', 'arrivalr_session=; Path=/; Max-Age=0')
+            self.end_headers()
+
+        elif path == '/api/history':
+            role = self._require_login()
+            if role is None:
+                return
             data = json.dumps(load_history()).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', len(data))
             self.end_headers()
             self.wfile.write(data)
-        elif self.path == '/api/settings':
+
+        elif path == '/api/settings':
+            role = self._require_admin()
+            if role is None:
+                return
             data = json.dumps(get_settings()).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', len(data))
             self.end_headers()
             self.wfile.write(data)
-        elif self.path in ('/', '/index.html'):
-            data = HTML.encode()
+
+        elif path in ('/', '/index.html'):
+            role = self._require_login()
+            if role is None:
+                return
+            data = build_html(role).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'text/html')
             self.send_header('Content-Length', len(data))
             self.end_headers()
             self.wfile.write(data)
+
         else:
             self.send_response(404)
             self.end_headers()
 
     def do_POST(self):
-        if self.path == '/api/settings':
+        if self.path == '/login':
+            length = int(self.headers.get('Content-Length', 0))
+            body = urllib.parse.parse_qs(self.rfile.read(length).decode())
+            username = body.get('username', [''])[0].strip().lower()
+            password = body.get('password', [''])[0]
+            cfg = get_settings()
+
+            role = None
+            if username == 'admin' and cfg.get('admin_password') and password == cfg['admin_password']:
+                role = 'admin'
+            elif username == 'viewer' and cfg.get('viewer_password') and password == cfg['viewer_password']:
+                role = 'viewer'
+
+            if role:
+                token = create_session(role)
+                log.info(f'Login: {username}')
+                self.send_response(302)
+                self.send_header('Location', '/')
+                self.send_header('Set-Cookie',
+                    f'arrivalr_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}')
+                self.end_headers()
+            else:
+                log.warning(f'Failed login attempt for username: {username!r}')
+                self._redirect('/login?error=1')
+
+        elif self.path == '/api/settings':
+            role = self._require_admin()
+            if role is None:
+                return
             length = int(self.headers.get('Content-Length', 0))
             body = json.loads(self.rfile.read(length))
             save_settings(body)
             log.info('Settings updated via web UI.')
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(b'{"ok":true}')
+            self._json(200, {'ok': True})
+
         else:
             self.send_response(404)
             self.end_headers()
