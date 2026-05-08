@@ -518,19 +518,35 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
   });
 });
 
+// Hide gear for non-admins
+if (ROLE !== 'admin') {
+  const g = document.getElementById('gear-btn');
+  if (g) g.parentElement.style.display = 'none';
+}
+
 // ── settings ─────────────────────────────────────────────────────────────────
 const SFIELDS = ['radarr_url','radarr_api_key','sonarr_url','sonarr_api_key',
                  'pushover_token','pushover_user','poll_interval','history_retention_days'];
 
-async function openSettings() {
+function openSettings() {
   if (ROLE !== 'admin') return;
-  const [sr, ur] = await Promise.all([fetch('/api/settings'), fetch('/api/users')]);
-  if (sr.status === 403) { showToast('Admin access required', 'error'); return; }
-  const s = await sr.json();
-  SFIELDS.forEach(k => { const el = document.getElementById(k); if (el) el.value = s[k]||''; });
-  if (ur.ok) { const ud = await ur.json(); renderUsers(ud.users, ud.pending_count); }
-  document.getElementById('users-section').style.display = '';
   document.getElementById('overlay').classList.add('open');
+  _loadSettingsData();
+}
+
+async function _loadSettingsData() {
+  try {
+    const [sr, ur] = await Promise.all([fetch('/api/settings'), fetch('/api/users')]);
+    if (sr.status === 401) { location.href = '/login'; return; }
+    if (!sr.ok) { showToast('Failed to load settings ('+sr.status+')', 'error'); return; }
+    const s = await sr.json();
+    SFIELDS.forEach(k => { const el = document.getElementById(k); if (el) el.value = s[k]||''; });
+    if (ur.ok) { const ud = await ur.json(); renderUsers(ud.users, ud.pending_count); }
+    document.getElementById('users-section').style.display = '';
+  } catch(err) {
+    showToast('Error loading settings: ' + err.message, 'error');
+    console.error(err);
+  }
 }
 
 function closeSettings() { document.getElementById('overlay').classList.remove('open'); }
