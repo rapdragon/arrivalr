@@ -1,0 +1,17 @@
+services:
+  radarr-monitor:
+    build: .
+    container_name: radarr-monitor
+    restart: unless-stopped
+    ports:
+      - "7070:7070"
+    volumes:
+      - ./data:/data
+    environment:
+      RADARR_URL: http://10.69.0.15:7878
+      RADARR_API_KEY: 73cd2efd0b144973b95ba2938eb68bad
+      SONARR_URL: http://10.69.0.18:8989
+      SONARR_API_KEY: 8acaa3b3e64748f48788630b752e57b0
+      PUSHOVER_TOKEN: aaes2gee3uctnz6njayrcdp59aocat
+      PUSHOVER_USER: uht4mtscsn8qkaix3vpoq9tnh25agk
+      POLL_INTERVAL: "300"
