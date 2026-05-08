@@ -48,6 +48,7 @@ HTML = """<!DOCTYPE html>
   .type-icon { width: 38px; height: 38px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; flex-shrink: 0; }
   .type-icon.movie { background: #1a1a3e; }
   .type-icon.series { background: #1a2e1a; }
+  .type-icon.episode { background: #2e1a2e; }
   .card-title { font-size: 1rem; font-weight: 600; color: #fff; line-height: 1.3; }
   .card-year { font-size: 0.8rem; color: #888; margin-top: 2px; }
   .tags { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -59,6 +60,8 @@ HTML = """<!DOCTYPE html>
   .type-label { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; padding: 2px 8px; border-radius: 3px; }
   .type-label.movie { background: #1a1a3e; color: #7b8cde; }
   .type-label.series { background: #1a2e1a; color: #7bde8c; }
+  .type-label.episode { background: #2e1a2e; color: #de7bde; }
+  .ep-code { font-size: 0.8rem; color: #de7bde; font-weight: 600; margin-top: 2px; }
   .empty { grid-column: 1/-1; text-align: center; padding: 80px 20px; color: #444; }
   .empty svg { width: 48px; height: 48px; margin-bottom: 16px; opacity: 0.3; }
   #refresh-indicator { width: 8px; height: 8px; background: #2ecc71; border-radius: 50%; animation: pulse 2s infinite; margin-left: 8px; }
@@ -80,6 +83,7 @@ HTML = """<!DOCTYPE html>
   <button class="filter-btn active" data-filter="all">All</button>
   <button class="filter-btn" data-filter="movie">Movies</button>
   <button class="filter-btn" data-filter="series">Series</button>
+  <button class="filter-btn" data-filter="episode">Episodes</button>
   <span class="count" id="count"></span>
 </div>
 <div class="grid" id="grid"></div>
@@ -109,17 +113,19 @@ HTML = """<!DOCTYPE html>
       return;
     }
     grid.innerHTML = [...items].reverse().map(h => {
-      const icon = h.type === 'movie' ? '🎬' : '📺';
+      const icon = h.type === 'movie' ? '🎬' : h.type === 'episode' ? '🎞️' : '📺';
       const tags = (h.genres||[]).map(g => `<span class="tag">${g}</span>`).join('');
       const folder = h.folder ? `<span class="tag folder">${h.folder}</span>` : '';
       const network = h.network ? `<span class="tag network">${h.network}</span>` : '';
       const seasons = h.seasons ? `<span class="tag">${h.seasons} season${h.seasons>1?'s':''}</span>` : '';
+      const epCode = h.episode_code ? `<div class="ep-code">${h.episode_code}${h.episode_title ? ' · ' + h.episode_title : ''}</div>` : '';
+      const subtitle = h.type === 'episode' ? '' : (h.year || '');
       return `<div class="card">
         <div class="card-header">
           <div class="type-icon ${h.type}">${icon}</div>
           <div>
             <div class="card-title">${h.title}</div>
-            <div class="card-year">${h.year||''}</div>
+            ${epCode || (subtitle ? `<div class="card-year">${subtitle}</div>` : '')}
           </div>
         </div>
         ${tags||folder||network||seasons ? `<div class="tags">${tags}${folder}${network}${seasons}</div>` : ''}
@@ -298,10 +304,66 @@ def check_sonarr(state):
     log.info(f'Sonarr: notified for {len(new_series)} new series.')
 
 
+def check_sonarr_episodes(state):
+    data = api_get(SONARR_URL, SONARR_API_KEY,
+                   '/history?pageSize=50&sortKey=date&sortDirection=descending'
+                   '&includeSeries=true&includeEpisode=true')
+    records = [r for r in data.get('records', []) if r.get('eventType') == 'downloadFolderImported']
+    if not records:
+        return
+
+    last_id = state.get('sonarr_last_history_id')
+
+    if last_id is None:
+        state['sonarr_last_history_id'] = records[0]['id']
+        log.info(f'Sonarr episodes first run — recording history cursor at ID {records[0]["id"]}.')
+        return
+
+    new_records = [r for r in records if r['id'] > last_id]
+    if not new_records:
+        log.info('Sonarr: no new episode downloads.')
+        return
+
+    for r in reversed(new_records):
+        series_title = (r.get('series') or {}).get('title', 'Unknown')
+        ep = r.get('episode') or {}
+        season = ep.get('seasonNumber')
+        episode = ep.get('episodeNumber')
+        ep_title = ep.get('title', '')
+        network = (r.get('series') or {}).get('network', '')
+        ep_code = f'S{season:02d}E{episode:02d}' if season is not None and episode is not None else ''
+        msg = f'{series_title}'
+        if ep_code:
+            msg += f' {ep_code}'
+        if ep_title:
+            msg += f'\n{ep_title}'
+        if network:
+            msg += f'\n{network}'
+        log.info(f'New episode: {series_title} {ep_code}')
+        pushover_send('New Episode Downloaded', msg)
+        append_history({
+            'type': 'episode',
+            'title': series_title,
+            'year': None,
+            'genres': [],
+            'folder': None,
+            'network': network or None,
+            'seasons': None,
+            'episode_code': ep_code or None,
+            'episode_title': ep_title or None,
+            'added_at': r.get('date', now_iso()),
+        })
+        time.sleep(0.5)
+
+    state['sonarr_last_history_id'] = records[0]['id']
+    log.info(f'Sonarr: notified for {len(new_records)} new episode download(s).')
+
+
 def check():
     state = load_state() or {}
     check_radarr(state)
     check_sonarr(state)
+    check_sonarr_episodes(state)
     save_state(state)
     prune_history()
 
